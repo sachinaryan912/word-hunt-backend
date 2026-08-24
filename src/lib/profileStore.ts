@@ -26,6 +26,12 @@ export function defaultProfile(uid: string): PlayerProfileDoc {
     bestDailyRank: null,
     adRewardsDate: null,
     adRewardsClaimed: 0,
+    dailyGiftDate: null,
+    dailyGiftFreeClaimed: false,
+    dailyGiftAdClaimed: false,
+    unlockedAvatars: [],
+    roomsCreatedDate: null,
+    roomsCreatedToday: 0,
     createdAt: now,
     updatedAt: now,
   };

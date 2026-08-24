@@ -19,6 +19,12 @@ export interface PlayerProfileDoc {
   bestDailyRank: number | null;
   adRewardsDate: string | null;
   adRewardsClaimed: number;
+  dailyGiftDate: string | null;
+  dailyGiftFreeClaimed: boolean;
+  dailyGiftAdClaimed: boolean;
+  unlockedAvatars: string[];
+  roomsCreatedDate: string | null;
+  roomsCreatedToday: number;
   createdAt: number;
   updatedAt: number;
 }

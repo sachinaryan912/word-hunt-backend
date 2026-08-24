@@ -17,6 +17,8 @@ import { usersRouter } from './routes/users';
 import { reportsRouter } from './routes/reports';
 import { blocksRouter } from './routes/blocks';
 import { adsRouter } from './routes/ads';
+import { dailyGiftRouter } from './routes/dailyGift';
+import { avatarsRouter } from './routes/avatars';
 import { setupSocket } from './socket/index';
 import { startDailyReminderLoop } from './lib/dailyReminder';
 
@@ -39,6 +41,8 @@ app.use('/v1/users', authMiddleware, usersRouter);
 app.use('/v1/reports', authMiddleware, mutationRateLimit, reportsRouter);
 app.use('/v1/blocks', authMiddleware, mutationRateLimit, blocksRouter);
 app.use('/v1/ads', authMiddleware, mutationRateLimit, adsRouter);
+app.use('/v1/daily-gift', authMiddleware, mutationRateLimit, dailyGiftRouter);
+app.use('/v1/avatars', authMiddleware, mutationRateLimit, avatarsRouter);
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: env.corsOrigin } });

@@ -1,6 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { getOrCreateProfile } from '../lib/profileStore';
 import { sendPushToUser } from '../lib/notifications';
+import { reserveRoomCreation } from '../lib/roomLimits';
 import { createMatch } from './matchLifecycle';
 import { rooms, uidToRoom } from './state';
 import { RoomState } from '../types';
@@ -47,6 +48,16 @@ export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
       return;
     }
     const profile = await getOrCreateProfile(uid);
+
+    const reservation = await reserveRoomCreation(uid);
+    if (!reservation.ok) {
+      socket.emit('error', { code: 'insufficient_xp_for_room', xpNeeded: 5 });
+      return;
+    }
+    if (reservation.xpCharged > 0) {
+      socket.emit('room:xp_charged', { amount: reservation.xpCharged });
+    }
+
     let code = generateCode();
     while (rooms.has(code)) code = generateCode();
 
