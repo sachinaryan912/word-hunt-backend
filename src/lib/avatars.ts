@@ -1,8 +1,12 @@
 export const AVATAR_COST_XP = 30;
 export const USERNAME_CHANGE_COST_XP = 100;
 
-/** 20 purchasable avatars — client renders placeholder art per id until real assets are supplied. */
-export const AVATAR_IDS: string[] = Array.from({ length: 20 }, (_, i) => `avatar_${String(i + 1).padStart(2, '0')}`);
+/**
+ * 34 purchasable avatars — ids match the SVG filenames the client ships at
+ * assets/avtars/avtarN.svg (word-hunting-app/assets/avtars), so id and asset
+ * stay in lockstep with no separate mapping to keep in sync.
+ */
+export const AVATAR_IDS: string[] = Array.from({ length: 34 }, (_, i) => `avtar${i}`);
 
 export function isValidAvatarId(id: string): boolean {
   return AVATAR_IDS.includes(id);
