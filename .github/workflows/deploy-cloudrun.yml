@@ -37,12 +37,17 @@ jobs:
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
-      # min-instances=0 + max-instances=1 is deliberate, not just for cost:
-      # match/room/matchmaking state lives in the process's memory (see
-      # src/socket/state.ts), so more than one live instance would split
-      # that state and break gameplay. Scaling to zero when idle is what
-      # keeps this basically free at low traffic (Cloud Run's free tier is
-      # ~180k vCPU-seconds and ~360k GiB-seconds per month).
+      # max-instances=1 is a correctness requirement, not a cost knob: match/
+      # room/matchmaking state lives in this process's memory (see
+      # src/socket/state.ts) with no Redis or shared store behind it. A
+      # second concurrent instance would have its own disconnected copy of
+      # that state — matches, queue entries, and room codes created on one
+      # instance would be invisible to the other. Keep this at 1 until that
+      # state moves to a shared store.
+      #
+      # min-instances=1 is a deliberate cost/reliability trade-off (chosen
+      # over the cheaper min-instances=0 default) to avoid cold-start delays
+      # on Socket.IO connections; it keeps one instance warm continuously.
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy "${SERVICE}" \
@@ -51,7 +56,7 @@ jobs:
             --platform=managed \
             --allow-unauthenticated \
             --service-account="word-hunt-backend-runtime@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
-            --min-instances=0 \
+            --min-instances=1 \
             --max-instances=1 \
             --cpu=1 \
             --memory=512Mi \

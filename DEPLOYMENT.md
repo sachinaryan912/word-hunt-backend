@@ -1,17 +1,21 @@
 # Deploying to Cloud Run
 
 `.github/workflows/deploy-cloudrun.yml` builds the Docker image and deploys it to
-Cloud Run on every push to `main`. It's configured to stay cheap:
+Cloud Run whenever `master` is updated (merge your PRs from `main` into `master`
+to trigger a deploy). It's configured to stay cheap while still being correct:
 
-- **`--min-instances=0`** — scales to zero when idle, so you pay nothing while nobody's playing.
-- **`--max-instances=1`** — this isn't just about cost. Match/room/matchmaking state lives in
-  the process's memory (`src/socket/state.ts`), so a second concurrent instance would split
-  that state and break gameplay. One instance is both the cheapest and the only correct option
-  until that state is moved to Redis or similar.
+- **`--min-instances=1`** — one instance stays warm at all times, so Socket.IO connections never
+  hit a cold start. This costs a small constant amount (very roughly $10-15/month for 512Mi/1
+  vCPU running continuously) rather than the near-$0 you'd get from `--min-instances=0` (scale to
+  zero when idle). Chosen deliberately over the cheaper default — change it back to `0` if
+  occasional multi-second cold starts on the first connection after idle are acceptable.
+- **`--max-instances=1`** — this one is not a cost knob, it's a correctness requirement. Match/
+  room/matchmaking state lives in the process's memory (`src/socket/state.ts`), so a second
+  concurrent instance would have its own disconnected copy of that state and silently break
+  matches, queue entries, and room codes. Keep this at `1` until that state is moved to Redis or
+  similar — do not raise it without doing that migration first.
 - **`512Mi` / `1 CPU`** — enough for Express + Socket.IO + firebase-admin without paying for
   headroom you don't need.
-- Cloud Run's free tier (~180k vCPU-seconds and ~360k GiB-seconds per month, 2M requests) covers
-  low-traffic usage entirely — expect close to $0/month until you have real concurrent players.
 
 No secret key is baked into the image: the container authenticates to Firebase using
 Application Default Credentials via its attached runtime service account.
@@ -77,9 +81,10 @@ Then, in the GitHub repo → **Settings → Secrets and variables → Actions**,
 Delete `deployer-key.json` locally once it's pasted into the secret — it's a long-lived
 credential and shouldn't sit on disk longer than necessary.
 
-Push to `main` and the workflow deploys automatically. The deployed URL is printed at the end
-of the run (Actions tab → latest run → "Print service URL" step) — that's what the Flutter app's
-`API_BASE_URL` should point to.
+Work happens on `main`; opening a PR from `main` into `master` and merging it triggers the
+deploy (the workflow only fires on pushes to `master`, the repo's default branch). The deployed
+URL is printed at the end of the run (Actions tab → latest run → "Print service URL" step) —
+that's what the Flutter app's `API_BASE_URL` should point to.
 
 ## A more secure alternative (optional)
 
