@@ -22,6 +22,9 @@ export interface PlayerProfileDoc {
   dailyGiftDate: string | null;
   dailyGiftFreeClaimed: boolean;
   dailyGiftAdClaimed: boolean;
+  unlockedAvatars: string[];
+  roomsCreatedDate: string | null;
+  roomsCreatedToday: number;
   createdAt: number;
   updatedAt: number;
 }
