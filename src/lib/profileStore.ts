@@ -26,6 +26,9 @@ export function defaultProfile(uid: string): PlayerProfileDoc {
     bestDailyRank: null,
     adRewardsDate: null,
     adRewardsClaimed: 0,
+    dailyGiftDate: null,
+    dailyGiftFreeClaimed: false,
+    dailyGiftAdClaimed: false,
     createdAt: now,
     updatedAt: now,
   };

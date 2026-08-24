@@ -19,6 +19,9 @@ export interface PlayerProfileDoc {
   bestDailyRank: number | null;
   adRewardsDate: string | null;
   adRewardsClaimed: number;
+  dailyGiftDate: string | null;
+  dailyGiftFreeClaimed: boolean;
+  dailyGiftAdClaimed: boolean;
   createdAt: number;
   updatedAt: number;
 }
