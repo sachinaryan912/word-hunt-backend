@@ -22,4 +22,8 @@ export const env = {
   corsOrigin: process.env.CORS_ORIGIN ?? '*',
   serviceAccountPath,
   hasServiceAccountFile: fs.existsSync(serviceAccountPath),
+  // The Firebase/Firestore project, which is intentionally a *different* GCP
+  // project than the one Cloud Run runs in — must be set explicitly so
+  // Application Default Credentials don't default to the hosting project.
+  firebaseProjectId: process.env.FIREBASE_PROJECT_ID ?? 'word-hunting-game',
 };

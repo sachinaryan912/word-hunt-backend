@@ -20,19 +20,29 @@ to trigger a deploy). It's configured to stay cheap while still being correct:
 No secret key is baked into the image: the container authenticates to Firebase using
 Application Default Credentials via its attached runtime service account.
 
+## Two GCP projects, on purpose
+
+Cloud Run hosting lives in **`word-hunt-506509`**. The actual Firebase data (Firestore, Auth,
+FCM) lives in the separate **`word-hunting-game`** project. That means the runtime service
+account — which exists in `word-hunt-506509` — needs its `roles/firebase.admin` grant made
+**on `word-hunting-game`**, a cross-project IAM binding, not on its own project. The app also
+sets `projectId` explicitly in `src/lib/firebase.ts` (via the `FIREBASE_PROJECT_ID` env var) so
+Application Default Credentials don't default to inferring `word-hunt-506509` from the Cloud Run
+environment.
+
 ## One-time setup
 
 Run this once, e.g. in [Cloud Shell](https://console.cloud.google.com/?cloudshell=true) (no
-local `gcloud` install needed). Replace `YOUR_PROJECT_ID` throughout — for this project that's
-`word-hunting-game`.
+local `gcloud` install needed).
 
 ```bash
-PROJECT_ID=YOUR_PROJECT_ID
+HOST_PROJECT_ID=word-hunt-506509      # where Cloud Run/Artifact Registry/service accounts live
+FIREBASE_PROJECT_ID=word-hunting-game # where Firestore/Auth/FCM data lives
 REGION=us-central1
 
-gcloud config set project "$PROJECT_ID"
+gcloud config set project "$HOST_PROJECT_ID"
 
-# 1. Enable the required APIs
+# 1. Enable the required APIs on the hosting project
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
   iam.googleapis.com cloudresourcemanager.googleapis.com
 
@@ -41,42 +51,47 @@ gcloud artifacts repositories create word-hunt-backend \
   --repository-format=docker --location="$REGION" \
   --description="Word Hunting backend images"
 
-# 3. Runtime service account — what Cloud Run runs AS. Needs Firebase Admin
-#    SDK access (Firestore, Auth, Messaging) and nothing else.
+# 3. Runtime service account — what Cloud Run runs AS. Lives in the host
+#    project, but its Firebase Admin SDK access is granted on the *Firebase*
+#    project (cross-project binding — this is the part that's easy to miss).
 gcloud iam service-accounts create word-hunt-backend-runtime \
+  --project="$HOST_PROJECT_ID" \
   --display-name="Word Hunting backend runtime"
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:word-hunt-backend-runtime@${PROJECT_ID}.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding "$FIREBASE_PROJECT_ID" \
+  --member="serviceAccount:word-hunt-backend-runtime@${HOST_PROJECT_ID}.iam.gserviceaccount.com" \
   --role="roles/firebase.admin"
 
 # 4. Deployer service account — what GitHub Actions authenticates AS to push
 #    images and deploy. Least-privilege: can push to Artifact Registry,
-#    deploy Cloud Run services, and "act as" the runtime SA above.
+#    deploy Cloud Run services, and "act as" the runtime SA above. All of
+#    this is scoped to the host project.
 gcloud iam service-accounts create word-hunt-backend-deployer \
+  --project="$HOST_PROJECT_ID" \
   --display-name="Word Hunting backend GitHub Actions deployer"
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:word-hunt-backend-deployer@${PROJECT_ID}.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding "$HOST_PROJECT_ID" \
+  --member="serviceAccount:word-hunt-backend-deployer@${HOST_PROJECT_ID}.iam.gserviceaccount.com" \
   --role="roles/run.admin"
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:word-hunt-backend-deployer@${PROJECT_ID}.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding "$HOST_PROJECT_ID" \
+  --member="serviceAccount:word-hunt-backend-deployer@${HOST_PROJECT_ID}.iam.gserviceaccount.com" \
   --role="roles/artifactregistry.writer"
 gcloud iam service-accounts add-iam-policy-binding \
-  "word-hunt-backend-runtime@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --member="serviceAccount:word-hunt-backend-deployer@${PROJECT_ID}.iam.gserviceaccount.com" \
+  "word-hunt-backend-runtime@${HOST_PROJECT_ID}.iam.gserviceaccount.com" \
+  --member="serviceAccount:word-hunt-backend-deployer@${HOST_PROJECT_ID}.iam.gserviceaccount.com" \
   --role="roles/iam.serviceAccountUser"
 
-# 5. Key for the deployer SA — this is what goes into the GitHub secret below.
+# 5. Key for the deployer SA — this is what goes into the GCP_SA_KEY secret.
 gcloud iam service-accounts keys create deployer-key.json \
-  --iam-account="word-hunt-backend-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
-cat deployer-key.json   # copy this whole JSON output for the GCP_SA_KEY secret below
+  --iam-account="word-hunt-backend-deployer@${HOST_PROJECT_ID}.iam.gserviceaccount.com"
+cat deployer-key.json
 ```
 
-Then, in the GitHub repo → **Settings → Secrets and variables → Actions**, add:
+GitHub repo secrets (`Settings → Secrets and variables → Actions`) — already set for this repo:
 
 | Secret | Value |
 |---|---|
-| `GCP_PROJECT_ID` | `word-hunting-game` |
-| `GCP_SA_KEY` | the full JSON printed by the last command above |
+| `GCP_PROJECT_ID` | `word-hunt-506509` (hosting project — Artifact Registry, Cloud Run) |
+| `FIREBASE_PROJECT_ID` | `word-hunting-game` (Firebase data project) |
+| `GCP_SA_KEY` | the deployer service account's JSON key |
 
 Delete `deployer-key.json` locally once it's pasted into the secret — it's a long-lived
 credential and shouldn't sit on disk longer than necessary.
