@@ -19,9 +19,10 @@ import { blocksRouter } from './routes/blocks';
 import { adsRouter } from './routes/ads';
 import { dailyGiftRouter } from './routes/dailyGift';
 import { avatarsRouter } from './routes/avatars';
-import { appConfigRouter } from './routes/appConfig';
+import { appConfigRouter, ANDROID_LATEST_VERSION_CODE } from './routes/appConfig';
 import { setupSocket } from './socket/index';
 import { startDailyReminderLoop } from './lib/dailyReminder';
+import { checkAndNotifyUpdate } from './lib/updateNotifier';
 
 const app = express();
 app.use(helmet());
@@ -50,6 +51,7 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: env.corsOrigin } });
 setupSocket(io);
 startDailyReminderLoop();
+void checkAndNotifyUpdate(ANDROID_LATEST_VERSION_CODE);
 
 server.listen(env.port, () => {
   console.log(`word-hunting-server listening on :${env.port}`);

@@ -15,7 +15,8 @@ const completeSchema = z.object({
   level: z.number().int().min(1).max(1000),
   wordsFound: z.number().int().min(0).max(20),
   targetWordCount: z.number().int().min(1).max(20),
-  timeSeconds: z.number().int().min(0).max(3600),
+  // No gameplay time limit on solo levels — this is just a generous sanity bound, not a countdown.
+  timeSeconds: z.number().int().min(0).max(86400),
   hintsUsed: z.number().int().min(0).max(3),
 });
 

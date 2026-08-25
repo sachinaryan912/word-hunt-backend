@@ -3,7 +3,7 @@ import { getOrCreateProfile } from '../lib/profileStore';
 import { sendPushToUser } from '../lib/notifications';
 import { EXTRA_ROOM_COST_XP, reserveRoomCreation } from '../lib/roomLimits';
 import { createMatch } from './matchLifecycle';
-import { rooms, uidToRoom } from './state';
+import { rooms, roomDisconnectTimers, uidToRoom } from './state';
 import { RoomState } from '../types';
 
 const ROOM_EXPIRY_MS = 10 * 60 * 1000;
@@ -12,7 +12,15 @@ function generateCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-function roomPayload(room: RoomState) {
+function clearDisconnectTimer(uid: string) {
+  const timer = roomDisconnectTimers.get(uid);
+  if (timer) {
+    clearTimeout(timer);
+    roomDisconnectTimers.delete(uid);
+  }
+}
+
+export function roomPayload(room: RoomState) {
   return {
     code: room.code,
     host: { uid: room.hostUid, displayName: room.hostDisplayName, rating: room.hostRating, ready: room.hostReady },
@@ -31,8 +39,12 @@ export function closeRoom(io: Server, code: string, reason: string) {
   if (!room) return;
   if (room.expireTimer) clearTimeout(room.expireTimer);
   io.to(`room-${code}`).emit('room:closed', { code, reason });
+  clearDisconnectTimer(room.hostUid);
   uidToRoom.delete(room.hostUid);
-  if (room.guestUid) uidToRoom.delete(room.guestUid);
+  if (room.guestUid) {
+    clearDisconnectTimer(room.guestUid);
+    uidToRoom.delete(room.guestUid);
+  }
   rooms.delete(code);
 }
 
@@ -127,6 +139,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
     const room = rooms.get(code);
     if (!room) return;
     socket.leave(`room-${code}`);
+    clearDisconnectTimer(uid);
     if (room.hostUid === uid) {
       closeRoom(io, code, 'host_left');
       return;
@@ -158,6 +171,8 @@ export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
     }
 
     if (room.expireTimer) clearTimeout(room.expireTimer);
+    clearDisconnectTimer(room.hostUid);
+    clearDisconnectTimer(room.guestUid);
     uidToRoom.delete(room.hostUid);
     uidToRoom.delete(room.guestUid);
     rooms.delete(room.code);
@@ -166,6 +181,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
       io,
       { uid: room.hostUid, displayName: room.hostDisplayName, rating: room.hostRating, socketId: room.hostSocketId, joinedAt: Date.now() },
       { uid: room.guestUid, displayName: room.guestDisplayName!, rating: room.guestRating!, socketId: room.guestSocketId!, joinedAt: Date.now() },
+      { unlimitedTime: true },
     );
   });
 
@@ -178,5 +194,23 @@ export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
       type: 'room_invite',
       code,
     });
+  });
+
+  // Called by the client right after a socket reconnect (e.g. a brief
+  // network drop) so a player who's still within their disconnect grace
+  // period picks back up in the same lobby instead of it going stale or
+  // being torn down.
+  socket.on('room:sync', () => {
+    const code = uidToRoom.get(uid);
+    if (!code) return;
+    const room = rooms.get(code);
+    if (!room) return;
+
+    clearDisconnectTimer(uid);
+    if (room.hostUid === uid) room.hostSocketId = socket.id;
+    else if (room.guestUid === uid) room.guestSocketId = socket.id;
+    socket.join(`room-${code}`);
+    io.to(`room-${code}`).emit('room:player_reconnected', { code, uid });
+    broadcastRoomUpdate(io, room);
   });
 }

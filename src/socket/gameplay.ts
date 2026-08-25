@@ -14,6 +14,8 @@ const wordSelectSchema = z.object({
     .max(20),
 });
 
+const matchIdSchema = z.object({ matchId: z.string().min(1) });
+
 const rateLimiter = new SocketRateLimiter(10, 1000);
 
 function computeStraightLine(start: GridPos, end: GridPos): GridPos[] {
@@ -133,5 +135,14 @@ export function registerGameplayHandlers(io: Server, socket: Socket, uid: string
     }
 
     claimWord(io, match, uid, matchedTarget, path);
+  });
+
+  socket.on('match:leave', (raw: unknown) => {
+    const parsed = matchIdSchema.safeParse(raw);
+    if (!parsed.success) return;
+    const match = activeMatches.get(parsed.data.matchId);
+    if (!match || match.status !== 'active') return;
+    if (!match.players.some((p) => p.uid === uid)) return;
+    void endMatch(io, match.matchId, 'forfeit', uid);
   });
 }
