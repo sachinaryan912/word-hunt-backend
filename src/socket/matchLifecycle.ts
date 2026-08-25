@@ -11,15 +11,24 @@ import { ActiveMatch, PlayerProfileDoc, QueueEntry } from '../types';
 import { activeMatches, uidToMatch, uidToSocket } from './state';
 import { cancelBotPlay, scheduleBotPlay } from './botPlayer';
 
-const MATCH_DURATION_SECONDS = 90;
+const MATCH_DURATION_SECONDS = 180;
 
-export function createMatch(io: Server, a: QueueEntry, b: QueueEntry): ActiveMatch {
+/** Private room matches have no gameplay time limit. This is only a
+ * background safety net so an abandoned-but-still-connected room match
+ * (both sockets open, nobody ever finishes or disconnects) doesn't sit in
+ * `activeMatches` forever — it never fires during normal play. */
+const UNLIMITED_MATCH_SAFETY_MS = 2 * 60 * 60 * 1000;
+
+export function createMatch(io: Server, a: QueueEntry, b: QueueEntry, options?: { unlimitedTime?: boolean }): ActiveMatch {
+  const unlimitedTime = options?.unlimitedTime ?? false;
   const matchId = randomUUID();
   const seed = matchId;
   const tier = tierForRating((a.rating + b.rating) / 2);
   const board = generateBoard(seed, tier);
   const startAt = Date.now();
-  const endAt = startAt + MATCH_DURATION_SECONDS * 1000;
+  const durationSeconds = unlimitedTime ? 0 : MATCH_DURATION_SECONDS;
+  const timerMs = unlimitedTime ? UNLIMITED_MATCH_SAFETY_MS : MATCH_DURATION_SECONDS * 1000;
+  const endAt = startAt + timerMs;
 
   const match: ActiveMatch = {
     matchId,
@@ -31,7 +40,7 @@ export function createMatch(io: Server, a: QueueEntry, b: QueueEntry): ActiveMat
     claimedWords: new Map(),
     startAt,
     endAt,
-    durationSeconds: MATCH_DURATION_SECONDS,
+    durationSeconds,
     status: 'active',
     endTimer: null,
     disconnectTimers: new Map(),
@@ -43,7 +52,7 @@ export function createMatch(io: Server, a: QueueEntry, b: QueueEntry): ActiveMat
 
   match.endTimer = setTimeout(() => {
     void endMatch(io, matchId, 'timeout');
-  }, MATCH_DURATION_SECONDS * 1000 + 500);
+  }, timerMs + 500);
 
   const vsBot = match.players.some((p) => p.isBot);
 
@@ -58,7 +67,7 @@ export function createMatch(io: Server, a: QueueEntry, b: QueueEntry): ActiveMat
       status: 'active',
       startAt,
       endAt,
-      durationSeconds: MATCH_DURATION_SECONDS,
+      durationSeconds,
       vsBot,
     })
     .catch((err) => console.error('failed to persist match doc', err));
@@ -74,7 +83,7 @@ export function createMatch(io: Server, a: QueueEntry, b: QueueEntry): ActiveMat
       opponent: { uid: opponent.uid, displayName: opponent.displayName, rating: opponent.rating },
       startAt,
       endAt,
-      durationSeconds: MATCH_DURATION_SECONDS,
+      durationSeconds,
     });
     io.sockets.sockets.get(p.socketId!)?.join(`match-${matchId}`);
   }

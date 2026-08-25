@@ -25,3 +25,9 @@ export const rooms = new Map<string, RoomState>();
 
 /** uid -> room code, for players currently in a lobby. */
 export const uidToRoom = new Map<string, string>();
+
+/** uid -> pending grace-period timer, for a player who just disconnected
+ * from a room lobby (not yet in a match). Cancelled by `room:sync` if they
+ * reconnect in time — mirrors the active-match disconnect grace period so a
+ * brief network blip doesn't instantly tear down the lobby. */
+export const roomDisconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();

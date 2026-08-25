@@ -62,11 +62,14 @@ dailyGiftRouter.post('/claim-ad', async (req: AuthedRequest, res) => {
   const ref = profileRef(uid);
   const today = todayDateKey();
 
+  // Unlimited — a player can watch as many rewarded ads as they like for
+  // repeat XP once they've claimed today's free gift. `dailyGiftAdClaimed`
+  // is kept only as an informational "watched at least one today" flag.
   const result = await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const profile = snap.data() as PlayerProfileDoc;
-    const { freeClaimed, adClaimed } = statusFor(profile, today);
-    if (!freeClaimed || adClaimed) return { ok: false as const };
+    const { freeClaimed } = statusFor(profile, today);
+    if (!freeClaimed) return { ok: false as const };
 
     const newXp = profile.xp + DAILY_GIFT_XP;
     const updates: Partial<PlayerProfileDoc> = {

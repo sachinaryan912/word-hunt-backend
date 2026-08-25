@@ -1,7 +1,6 @@
 import { generateBoard } from './boardGenerator';
 
 const DAILY_TIER = 3; // 10x10, 7 words — matches the existing Daily Challenge UI's grid size.
-export const DAILY_DURATION_SECONDS = 120;
 const LAUNCH_DATE = Date.UTC(2026, 0, 1);
 
 export function todayDateKey(): string {
