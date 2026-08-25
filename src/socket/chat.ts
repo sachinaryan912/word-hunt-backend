@@ -20,7 +20,7 @@ function sanitize(text: string): string {
   return out;
 }
 
-export function registerChatHandlers(socket: Socket, uid: string, displayName: string) {
+export function registerChatHandlers(io: Server, socket: Socket, uid: string, displayName: string) {
   socket.on('chat:send', (raw: unknown) => {
     if (!rateLimiter.allow(socket.id)) return;
     const parsed = chatSchema.safeParse(raw);
@@ -29,20 +29,15 @@ export function registerChatHandlers(socket: Socket, uid: string, displayName: s
     // Only allow sending into a channel (match/room) this socket has actually joined.
     if (!socket.rooms.has(parsed.data.channel)) return;
 
-    socket.to(parsed.data.channel).emit('chat:message', {
+    // One emit to the whole room — including the sender — so every
+    // participant (including this socket) sees the exact same message with
+    // the same id/timestamp, instead of two separately-generated copies.
+    io.to(parsed.data.channel).emit('chat:message', {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       senderId: uid,
       senderName: displayName,
       text: sanitize(parsed.data.text),
       timestamp: Date.now(),
-    });
-    socket.emit('chat:message', {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-self`,
-      senderId: uid,
-      senderName: displayName,
-      text: sanitize(parsed.data.text),
-      timestamp: Date.now(),
-      isSelf: true,
     });
   });
 }
