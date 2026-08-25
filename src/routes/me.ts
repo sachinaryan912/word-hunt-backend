@@ -4,6 +4,7 @@ import { db } from '../lib/firebase';
 import { AuthedRequest } from '../middleware/authMiddleware';
 import { getOrCreateProfile, profileRef } from '../lib/profileStore';
 import { USERNAME_CHANGE_COST_XP } from '../lib/avatars';
+import { syncDisplayNameAcrossPeriods } from '../lib/periodicLeaderboard';
 import { PlayerProfileDoc } from '../types';
 
 export const meRouter = Router();
@@ -54,6 +55,7 @@ meRouter.patch('/', async (req: AuthedRequest, res) => {
       res.status(402).json({ error: 'insufficient_xp', cost: USERNAME_CHANGE_COST_XP });
       return;
     }
+    void syncDisplayNameAcrossPeriods(uid, newName);
     res.json(result.profile);
     return;
   }
