@@ -1,11 +1,17 @@
 import { Server, Socket } from 'socket.io';
 import { getOrCreateProfile } from '../lib/profileStore';
 import { getBlockedUids } from '../lib/blocks';
+import { makeBotEntry } from '../lib/bots';
 import { createMatch } from './matchLifecycle';
 import { queue, removeFromQueue, uidToMatch } from './state';
 
 const INITIAL_WINDOW = 200;
 const WINDOW_EXPANSION_PER_5S = 50;
+
+/** How long a player waits for a real opponent before getting a bot
+ * instead. Keeps Quick Match from leaving a new/off-peak player searching
+ * forever when nobody else happens to be queued at the same time. */
+const BOT_FALLBACK_MS = 12_000;
 
 function ratingWindowFor(entry: { joinedAt: number }): number {
   const waitedSec = (Date.now() - entry.joinedAt) / 1000;
@@ -37,6 +43,17 @@ export function startMatchmakingLoop(io: Server) {
           createMatch(io, a, b);
           return; // restart scan next tick; indices are now stale
         }
+      }
+    }
+
+    // Nobody real to pair with this tick — anyone who's waited long enough
+    // gets a bot opponent instead of searching indefinitely.
+    const now = Date.now();
+    for (let i = queue.length - 1; i >= 0; i--) {
+      const entry = queue[i];
+      if (now - entry.joinedAt >= BOT_FALLBACK_MS) {
+        queue.splice(i, 1);
+        createMatch(io, entry, makeBotEntry(entry.rating));
       }
     }
   }, 1000);

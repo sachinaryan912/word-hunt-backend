@@ -36,8 +36,43 @@ function pathsEqual(a: GridPos[], b: GridPos[]): boolean {
 
 export function broadcastToMatch(io: Server, match: ActiveMatch, event: string, payload: unknown) {
   for (const p of match.players) {
+    if (p.isBot) continue;
     const socketId = uidToSocket.get(p.uid) ?? p.socketId;
     if (socketId) io.to(socketId).emit(event, payload);
+  }
+}
+
+/** Scores a word for `uid`, updates match state, and broadcasts it — the
+ * single source of truth for claiming a word, used both by the real
+ * word:select handler below (after validating the player's input) and by
+ * the bot simulator (botPlayer.ts), which already knows its claim is
+ * legitimate since it reads straight from the board. */
+export function claimWord(io: Server, match: ActiveMatch, uid: string, matchedTarget: string, path: GridPos[]) {
+  const timeRemainingSec = Math.max(0, (match.endAt - Date.now()) / 1000);
+  const score = scoreForWord(matchedTarget, timeRemainingSec, match.durationSeconds);
+
+  match.claimedWords.set(matchedTarget, { claimedBy: uid, path, score });
+  const player = match.players.find((p) => p.uid === uid)!;
+  player.score += score;
+  player.wordsFound += 1;
+
+  for (const p of match.players) {
+    const opponent = match.players.find((o) => o.uid !== p.uid)!;
+    if (p.score < opponent.score) p.wasBehind = true;
+  }
+
+  const [p1, p2] = match.players;
+  broadcastToMatch(io, match, 'word:claimed', {
+    matchId: match.matchId,
+    word: matchedTarget,
+    path,
+    claimedBy: uid,
+    score,
+    scores: { [p1.uid]: p1.score, [p2.uid]: p2.score },
+  });
+
+  if (match.claimedWords.size === match.board.targetWords.length) {
+    void endMatch(io, match.matchId, 'completed');
   }
 }
 
@@ -97,31 +132,6 @@ export function registerGameplayHandlers(io: Server, socket: Socket, uid: string
       return;
     }
 
-    const timeRemainingSec = Math.max(0, (match.endAt - Date.now()) / 1000);
-    const score = scoreForWord(matchedTarget, timeRemainingSec, match.durationSeconds);
-
-    match.claimedWords.set(matchedTarget, { claimedBy: uid, path, score });
-    const player = match.players.find((p) => p.uid === uid)!;
-    player.score += score;
-    player.wordsFound += 1;
-
-    for (const p of match.players) {
-      const opponent = match.players.find((o) => o.uid !== p.uid)!;
-      if (p.score < opponent.score) p.wasBehind = true;
-    }
-
-    const [p1, p2] = match.players;
-    broadcastToMatch(io, match, 'word:claimed', {
-      matchId,
-      word: matchedTarget,
-      path,
-      claimedBy: uid,
-      score,
-      scores: { [p1.uid]: p1.score, [p2.uid]: p2.score },
-    });
-
-    if (match.claimedWords.size === board.targetWords.length) {
-      void endMatch(io, matchId, 'completed');
-    }
+    claimWord(io, match, uid, matchedTarget, path);
   });
 }

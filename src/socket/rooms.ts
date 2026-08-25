@@ -1,7 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { getOrCreateProfile } from '../lib/profileStore';
 import { sendPushToUser } from '../lib/notifications';
-import { reserveRoomCreation } from '../lib/roomLimits';
+import { EXTRA_ROOM_COST_XP, reserveRoomCreation } from '../lib/roomLimits';
 import { createMatch } from './matchLifecycle';
 import { rooms, uidToRoom } from './state';
 import { RoomState } from '../types';
@@ -51,7 +51,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
 
     const reservation = await reserveRoomCreation(uid);
     if (!reservation.ok) {
-      socket.emit('error', { code: 'insufficient_xp_for_room', xpNeeded: 5 });
+      socket.emit('error', { code: 'insufficient_xp_for_room', xpNeeded: EXTRA_ROOM_COST_XP });
       return;
     }
     if (reservation.xpCharged > 0) {

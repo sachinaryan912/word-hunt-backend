@@ -31,7 +31,7 @@ export function setupSocket(io: Server) {
     registerGameplayHandlers(io, socket, uid);
     registerDisconnectHandlers(io, socket, uid);
     registerRoomHandlers(io, socket, uid);
-    registerChatHandlers(socket, uid, profile.displayName);
+    registerChatHandlers(io, socket, uid, profile.displayName);
   });
 
   startMatchmakingLoop(io);
