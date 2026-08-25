@@ -19,6 +19,7 @@ import { blocksRouter } from './routes/blocks';
 import { adsRouter } from './routes/ads';
 import { dailyGiftRouter } from './routes/dailyGift';
 import { avatarsRouter } from './routes/avatars';
+import { appConfigRouter } from './routes/appConfig';
 import { setupSocket } from './socket/index';
 import { startDailyReminderLoop } from './lib/dailyReminder';
 
@@ -29,6 +30,7 @@ app.use(express.json({ limit: '64kb' }));
 app.use(apiRateLimit);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+app.use('/v1/app-config', appConfigRouter);
 
 app.use('/v1/me', authMiddleware, mutationRateLimit, meRouter);
 app.use('/v1/leaderboards', authMiddleware, leaderboardsRouter);
