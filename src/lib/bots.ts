@@ -8,6 +8,8 @@ const BOT_NAMES = [
   'Meera Krishnan', 'Varun Desai', 'Pooja Bhatt', 'Aryan Kulkarni', 'Riya Bansal',
   'Nikhil Agarwal', 'Tanvi Rathore', 'Kabir Singh', 'Anjali Chauhan', 'Dev Thakur',
   'Simran Kaur', 'Manish Yadav', 'Naina Bhalla', 'Yash Trivedi', 'Ritika Saxena',
+  'Harsh Vardhan', 'Snehal Ghosh', 'Rajat Khanna', 'Bhavya Suri', 'Amit Dubey',
+  'Shreya Nambiar', 'Gaurav Sethi', 'Lavanya Pandey', 'Om Prakash', 'Isha Chowdhury',
 ];
 
 const RATING_JITTER = 80;

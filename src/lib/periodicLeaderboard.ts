@@ -42,6 +42,31 @@ export async function incrementPeriodScore(uid: string, displayName: string, poi
   await batch.commit();
 }
 
+/**
+ * Patches the display name into the *current* daily/weekly/monthly period docs
+ * (skipping any that don't exist yet, so this can't create a phantom zero-score
+ * entry for a period the player hasn't scored in). incrementPeriodScore snapshots
+ * displayName at score time and otherwise never refreshes it, so without this a
+ * rename only shows up on periodic leaderboards once the player scores again.
+ */
+export async function syncDisplayNameAcrossPeriods(uid: string, displayName: string): Promise<void> {
+  const now = new Date();
+  const keys: Exclude<LeaderboardPeriod, 'global'>[] = ['daily', 'weekly', 'monthly'];
+  const refs = keys.map((period) =>
+    db.collection('leaderboardPeriods').doc(periodDocKey(period, now)).collection('entries').doc(uid),
+  );
+  const snaps = await Promise.all(refs.map((ref) => ref.get()));
+  const batch = db.batch();
+  let hasUpdate = false;
+  snaps.forEach((snap, i) => {
+    if (snap.exists) {
+      batch.update(refs[i], { displayName });
+      hasUpdate = true;
+    }
+  });
+  if (hasUpdate) await batch.commit();
+}
+
 export interface LeaderboardEntryDto {
   rank: number;
   playerId: string;
