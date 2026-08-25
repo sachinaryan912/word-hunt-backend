@@ -4,7 +4,7 @@ import { todayDateKey } from './dailyChallenge';
 import { PlayerProfileDoc } from '../types';
 
 export const FREE_ROOMS_PER_DAY = 5;
-export const EXTRA_ROOM_COST_XP = 5;
+export const EXTRA_ROOM_COST_XP = 10;
 
 export type RoomReservation = { ok: true; xpCharged: number } | { ok: false; reason: 'insufficient_xp' };
 

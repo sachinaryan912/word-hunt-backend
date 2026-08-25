@@ -63,6 +63,11 @@ export interface MatchPlayerState {
   socketId: string | null;
   wasBehind: boolean;
   hadComebackWin: boolean;
+  /** A simulated opponent used when no real player is available in the
+   * matchmaking queue. Bots never touch Firestore — no profile doc, no
+   * leaderboard entry, no achievements — only the real player's rating,
+   * XP, and stats are written when a bot match ends. */
+  isBot?: boolean;
 }
 
 export interface ActiveMatch {
@@ -85,6 +90,7 @@ export interface QueueEntry {
   socketId: string;
   joinedAt: number;
   blockedUids?: Set<string>;
+  isBot?: boolean;
 }
 
 export interface RoomState {
