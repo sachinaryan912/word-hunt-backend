@@ -125,7 +125,7 @@ dailyChallengeRouter.post('/complete', async (req: AuthedRequest, res) => {
     return { ...p, ...updates } as PlayerProfileDoc;
   });
 
-  void incrementPeriodScore(uid, profile.displayName, score);
+  void incrementPeriodScore(uid, profile.displayName, score, updatedProfile.rating);
   void checkAndGrantAchievements(uid, updatedProfile, { lastSoloTimeSeconds: timeSeconds, lastSoloAccuracy: accuracy });
 
   res.json({ score, bestScore, accuracy, rankToday, xpBonus, profile: updatedProfile });
