@@ -86,6 +86,7 @@ export interface LeaderboardEntryDto {
   wordsFound: number;
   isCurrentUser: boolean;
   avatar: string;
+  xp: number;
 }
 
 export interface LeaderboardResultDto {
@@ -105,6 +106,7 @@ async function globalAll(callerUid: string, limit: number): Promise<LeaderboardR
       wordsFound: p.wordsFoundTotal,
       isCurrentUser: p.uid === callerUid,
       avatar: p.avatar,
+      xp: p.xp,
     };
   });
 
@@ -127,6 +129,7 @@ async function globalAll(callerUid: string, limit: number): Promise<LeaderboardR
       wordsFound: me.wordsFoundTotal,
       isCurrentUser: true,
       avatar: me.avatar,
+      xp: me.xp,
     },
   };
 }
@@ -155,6 +158,7 @@ async function periodAll(period: Exclude<LeaderboardPeriod, 'global'>, callerUid
       wordsFound: 0,
       isCurrentUser: doc.id === callerUid,
       avatar: playersByUid.get(doc.id)?.avatar ?? '',
+      xp: playersByUid.get(doc.id)?.xp ?? 0,
     };
   });
 
@@ -186,6 +190,7 @@ async function periodAll(period: Exclude<LeaderboardPeriod, 'global'>, callerUid
       wordsFound: 0,
       isCurrentUser: true,
       avatar: myPlayer?.avatar ?? '',
+      xp: myPlayer?.xp ?? 0,
     },
   };
 }
@@ -206,13 +211,13 @@ async function friendsScoped(
   const playersByUid = new Map<string, PlayerProfileDoc>();
   playerSnaps.forEach((snap) => snap.docs.forEach((d) => playersByUid.set(d.id, d.data() as PlayerProfileDoc)));
 
-  let raw: { uid: string; name: string; value: number; wordsFound: number; avatar: string }[] = [];
+  let raw: { uid: string; name: string; value: number; wordsFound: number; avatar: string; xp: number }[] = [];
 
   if (period === 'global') {
     raw = uids
       .map((uid) => playersByUid.get(uid))
       .filter((p): p is PlayerProfileDoc => p !== undefined)
-      .map((p) => ({ uid: p.uid, name: p.displayName, value: p.rating, wordsFound: p.wordsFoundTotal, avatar: p.avatar }));
+      .map((p) => ({ uid: p.uid, name: p.displayName, value: p.rating, wordsFound: p.wordsFoundTotal, avatar: p.avatar, xp: p.xp }));
   } else {
     const col = db.collection('leaderboardPeriods').doc(periodDocKey(period)).collection('entries');
     const periodSnaps = await Promise.all(
@@ -232,6 +237,7 @@ async function friendsScoped(
         value: (d?.rating as number) ?? p?.rating ?? 0,
         wordsFound: 0,
         avatar: p?.avatar ?? '',
+        xp: p?.xp ?? 0,
       };
     });
   }
@@ -245,10 +251,11 @@ async function friendsScoped(
     wordsFound: r.wordsFound,
     isCurrentUser: r.uid === callerUid,
     avatar: r.avatar,
+    xp: r.xp,
   }));
 
   const myIndex = raw.findIndex((r) => r.uid === callerUid);
-  const mine = raw[myIndex] ?? { uid: callerUid, name: 'You', value: 0, wordsFound: 0, avatar: '' };
+  const mine = raw[myIndex] ?? { uid: callerUid, name: 'You', value: 0, wordsFound: 0, avatar: '', xp: 0 };
 
   return {
     entries,
@@ -260,6 +267,7 @@ async function friendsScoped(
       wordsFound: mine.wordsFound,
       isCurrentUser: true,
       avatar: mine.avatar,
+      xp: mine.xp,
     },
   };
 }
