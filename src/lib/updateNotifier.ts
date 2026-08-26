@@ -1,5 +1,5 @@
 import { db } from './firebase';
-import { sendPushToUser } from './notifications';
+import { sendPushToUsers } from './notifications';
 import { PlayerProfileDoc } from '../types';
 
 const META_REF = db.collection('appMeta').doc('android');
@@ -25,13 +25,14 @@ export async function checkAndNotifyUpdate(latestVersionCode: number) {
     await META_REF.set({ latestVersionCode });
 
     const playersSnap = await db.collection('players').where('notificationsEnabled', '==', true).get();
-    for (const doc of playersSnap.docs) {
-      const p = doc.data() as PlayerProfileDoc;
-      if (!p.fcmToken) continue;
-      void sendPushToUser(p.uid, 'Update available', 'A new version of Word Hunting is ready — update now for the latest fixes and features.', {
-        type: 'app_update',
-      });
-    }
+    const targets = playersSnap.docs
+      .map((doc) => doc.data() as PlayerProfileDoc)
+      .filter((p) => p.fcmToken)
+      .map((p) => ({ uid: p.uid, fcmToken: p.fcmToken! }));
+
+    await sendPushToUsers(targets, 'Update available', 'A new version of Word Hunting is ready — update now for the latest fixes and features.', {
+      type: 'app_update',
+    });
   } catch (err) {
     console.error('update notifier failed', err);
   }

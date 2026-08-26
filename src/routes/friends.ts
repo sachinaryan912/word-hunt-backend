@@ -91,39 +91,47 @@ friendsRouter.post('/requests', async (req: AuthedRequest, res) => {
   res.json({ status: 'pending' });
 });
 
+type RequestClaim =
+  | { ok: true; fromUid: string; toUid: string }
+  | { ok: false; status: 404 | 403 | 409; error: string };
+
 friendsRouter.post('/requests/:id/accept', async (req: AuthedRequest, res) => {
   const ref = db.collection('friendRequests').doc(String(req.params.id));
-  const snap = await ref.get();
-  if (!snap.exists) {
-    res.status(404).json({ error: 'not_found' });
+  // Claiming the request (pending -> accepted) inside a transaction closes
+  // the race where two concurrent accept calls both read status 'pending'
+  // before either write lands — only one can win the transaction here, the
+  // other gets 'not_pending' below instead of both running acceptFriendship.
+  const claim: RequestClaim = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return { ok: false, status: 404, error: 'not_found' };
+    const data = snap.data()!;
+    if (data.toUid !== req.uid) return { ok: false, status: 403, error: 'forbidden' };
+    if (data.status !== 'pending') return { ok: false, status: 409, error: 'not_pending' };
+    tx.update(ref, { status: 'accepted' });
+    return { ok: true, fromUid: data.fromUid as string, toUid: data.toUid as string };
+  });
+  if (!claim.ok) {
+    res.status(claim.status).json({ error: claim.error });
     return;
   }
-  const data = snap.data()!;
-  if (data.toUid !== req.uid) {
-    res.status(403).json({ error: 'forbidden' });
-    return;
-  }
-  if (data.status !== 'pending') {
-    res.status(409).json({ error: 'not_pending' });
-    return;
-  }
-  await acceptFriendship(data.fromUid, data.toUid);
-  await ref.update({ status: 'accepted' });
+  await acceptFriendship(claim.fromUid, claim.toUid);
   res.json({ status: 'accepted' });
 });
 
 friendsRouter.post('/requests/:id/decline', async (req: AuthedRequest, res) => {
   const ref = db.collection('friendRequests').doc(String(req.params.id));
-  const snap = await ref.get();
-  if (!snap.exists) {
-    res.status(404).json({ error: 'not_found' });
+  const claim: RequestClaim = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return { ok: false, status: 404, error: 'not_found' };
+    const data = snap.data()!;
+    if (data.toUid !== req.uid) return { ok: false, status: 403, error: 'forbidden' };
+    tx.update(ref, { status: 'declined' });
+    return { ok: true, fromUid: data.fromUid as string, toUid: data.toUid as string };
+  });
+  if (!claim.ok) {
+    res.status(claim.status).json({ error: claim.error });
     return;
   }
-  if (snap.data()!.toUid !== req.uid) {
-    res.status(403).json({ error: 'forbidden' });
-    return;
-  }
-  await ref.update({ status: 'declined' });
   res.json({ status: 'declined' });
 });
 

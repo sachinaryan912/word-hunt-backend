@@ -1,10 +1,11 @@
 import { Server, Socket } from 'socket.io';
 import { z } from 'zod';
 import { activeMatches, removeFromQueue, roomDisconnectTimers, rooms, socketToUid, uidToMatch, uidToRoom, uidToSocket } from './state';
-import { broadcastToMatch } from './gameplay';
+import { broadcastToMatch, rateLimiter as wordSelectRateLimiter } from './gameplay';
 import { endMatch } from './matchLifecycle';
 import { closeRoom, roomPayload } from './rooms';
 import { cancelFriendInvitesFor } from './friendMatch';
+import { rateLimiter as chatRateLimiter } from './chat';
 
 const GRACE_PERIOD_MS = 20_000;
 /** Same grace period as an active match — a brief network blip shouldn't
@@ -54,6 +55,11 @@ export function registerDisconnectHandlers(io: Server, socket: Socket, uid: stri
 
   socket.on('disconnect', () => {
     socketToUid.delete(socket.id);
+    // Per-socket rate-limit history is otherwise never freed — without this
+    // every socket that ever sent one word:select/chat:send leaves a
+    // permanent entry in these module-level maps for the life of the process.
+    wordSelectRateLimiter.clear(socket.id);
+    chatRateLimiter.clear(socket.id);
     if (uidToSocket.get(uid) !== socket.id) {
       // A newer connection for this uid already replaced this socket; nothing to clean up.
       return;

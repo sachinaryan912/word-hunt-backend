@@ -11,7 +11,7 @@ const chatSchema = z.object({
   text: z.string().min(1).max(200),
 });
 
-const rateLimiter = new SocketRateLimiter(3, 2000);
+export const rateLimiter = new SocketRateLimiter(3, 2000);
 
 function sanitize(text: string): string {
   let out = text;
