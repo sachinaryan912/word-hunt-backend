@@ -40,3 +40,27 @@ export async function reserveRoomCreation(uid: string): Promise<RoomReservation>
     return { ok: true, xpCharged: EXTRA_ROOM_COST_XP };
   });
 }
+
+/**
+ * Undoes reserveRoomCreation's charge for a room that closed without a guest
+ * ever joining — the host backing out (via 'back', leaving, disconnecting,
+ * or letting it expire) before anyone showed up shouldn't cost them one of
+ * their free rooms for the day or the XP they paid past that limit.
+ */
+export async function refundRoomCreation(uid: string, xpCharged: number): Promise<void> {
+  const ref = profileRef(uid);
+  const today = todayDateKey();
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const profile = snap.data() as PlayerProfileDoc;
+    const update: Record<string, unknown> = { updatedAt: Date.now() };
+    if (profile.roomsCreatedDate === today && profile.roomsCreatedToday > 0) {
+      update.roomsCreatedToday = profile.roomsCreatedToday - 1;
+    }
+    if (xpCharged > 0) {
+      update.xp = profile.xp + xpCharged;
+    }
+    tx.update(ref, update);
+  });
+}
