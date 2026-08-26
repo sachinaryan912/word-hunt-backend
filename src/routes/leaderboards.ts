@@ -8,7 +8,8 @@ const VALID_PERIODS: LeaderboardPeriod[] = ['global', 'daily', 'weekly', 'monthl
 const VALID_SCOPES: LeaderboardScope[] = ['all', 'friends'];
 
 leaderboardsRouter.get('/', async (req: AuthedRequest, res) => {
-  const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 100)));
+  const parsedLimit = Number(req.query.limit);
+  const limit = Number.isFinite(parsedLimit) ? Math.min(200, Math.max(1, parsedLimit)) : 100;
   const periodParam = String(req.query.period ?? 'global');
   const scopeParam = String(req.query.scope ?? 'all');
 

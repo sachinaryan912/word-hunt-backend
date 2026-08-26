@@ -5,7 +5,7 @@ Cloud Run whenever `master` is updated (merge your PRs from `main` into `master`
 to trigger a deploy). It's configured to stay cheap while still being correct:
 
 - **`--min-instances=1`** — one instance stays warm at all times, so Socket.IO connections never
-  hit a cold start. This costs a small constant amount (very roughly $10-15/month for 512Mi/1
+  hit a cold start. This costs a small constant amount (very roughly $5-8/month for 256Mi/1
   vCPU running continuously) rather than the near-$0 you'd get from `--min-instances=0` (scale to
   zero when idle). Chosen deliberately over the cheaper default — change it back to `0` if
   occasional multi-second cold starts on the first connection after idle are acceptable.
@@ -14,8 +14,19 @@ to trigger a deploy). It's configured to stay cheap while still being correct:
   concurrent instance would have its own disconnected copy of that state and silently break
   matches, queue entries, and room codes. Keep this at `1` until that state is moved to Redis or
   similar — do not raise it without doing that migration first.
-- **`512Mi` / `1 CPU`** — enough for Express + Socket.IO + firebase-admin without paying for
+- **`256Mi` / `1 CPU`** — enough for Express + Socket.IO + firebase-admin without paying for
   headroom you don't need.
+
+## Firestore composite indexes
+
+`firestore.indexes.json` (deployed via `firebase deploy --only firestore:indexes`, requires the
+[Firebase CLI](https://firebase.google.com/docs/cli)) declares the composite indexes this app's
+queries need beyond Firestore's automatic single-field indexes — currently just
+`dailyResults(date ASC, score ASC)` for the daily-challenge rank query in
+`src/routes/dailyChallenge.ts`. These already exist on the live `word-hunting-game` project (built
+up via Firestore's own "missing index" error links over time); this file only matters when
+standing up a fresh or disaster-recovery Firestore project, so provisioning doesn't silently wait
+on the first user to trigger the same error.
 
 No secret key is baked into the image: the container authenticates to Firebase using
 Application Default Credentials via its attached runtime service account.

@@ -53,47 +53,60 @@ function scheduleExpiry(io: Server, room: RoomState) {
   room.expireTimer = setTimeout(() => closeRoom(io, room.code, 'expired'), ROOM_EXPIRY_MS);
 }
 
+// Reserves a uid across the async gaps in 'room:create' below. Without this,
+// two rapid room:create calls from the same host (double-tap, client retry)
+// both pass the initial uidToRoom check, both run reserveRoomCreation (each
+// charging/decrementing the daily free-room count independently), and the
+// second rooms.set/uidToRoom.set silently orphans the first room until its
+// 10-minute expiry.
+const pendingRoomCreate = new Set<string>();
+
 export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
   socket.on('room:create', async () => {
-    if (uidToRoom.has(uid)) {
+    if (uidToRoom.has(uid) || pendingRoomCreate.has(uid)) {
       socket.emit('error', { code: 'already_in_room' });
       return;
     }
-    const profile = await getOrCreateProfile(uid);
+    pendingRoomCreate.add(uid);
+    try {
+      const profile = await getOrCreateProfile(uid);
 
-    const reservation = await reserveRoomCreation(uid);
-    if (!reservation.ok) {
-      socket.emit('error', { code: 'insufficient_xp_for_room', xpNeeded: EXTRA_ROOM_COST_XP });
-      return;
+      const reservation = await reserveRoomCreation(uid);
+      if (!reservation.ok) {
+        socket.emit('error', { code: 'insufficient_xp_for_room', xpNeeded: EXTRA_ROOM_COST_XP });
+        return;
+      }
+      if (reservation.xpCharged > 0) {
+        socket.emit('room:xp_charged', { amount: reservation.xpCharged });
+      }
+
+      let code = generateCode();
+      while (rooms.has(code)) code = generateCode();
+
+      const room: RoomState = {
+        code,
+        hostUid: uid,
+        hostDisplayName: profile.displayName,
+        hostRating: profile.rating,
+        hostSocketId: socket.id,
+        hostReady: false,
+        guestUid: null,
+        guestDisplayName: null,
+        guestRating: null,
+        guestSocketId: null,
+        guestReady: false,
+        createdAt: Date.now(),
+        expireTimer: null,
+      };
+      rooms.set(code, room);
+      uidToRoom.set(uid, code);
+      socket.join(`room-${code}`);
+      scheduleExpiry(io, room);
+      socket.emit('room:created', { code });
+      broadcastRoomUpdate(io, room);
+    } finally {
+      pendingRoomCreate.delete(uid);
     }
-    if (reservation.xpCharged > 0) {
-      socket.emit('room:xp_charged', { amount: reservation.xpCharged });
-    }
-
-    let code = generateCode();
-    while (rooms.has(code)) code = generateCode();
-
-    const room: RoomState = {
-      code,
-      hostUid: uid,
-      hostDisplayName: profile.displayName,
-      hostRating: profile.rating,
-      hostSocketId: socket.id,
-      hostReady: false,
-      guestUid: null,
-      guestDisplayName: null,
-      guestRating: null,
-      guestSocketId: null,
-      guestReady: false,
-      createdAt: Date.now(),
-      expireTimer: null,
-    };
-    rooms.set(code, room);
-    uidToRoom.set(uid, code);
-    socket.join(`room-${code}`);
-    scheduleExpiry(io, room);
-    socket.emit('room:created', { code });
-    broadcastRoomUpdate(io, room);
   });
 
   socket.on('room:join', async (data: { code?: string }) => {
@@ -114,6 +127,19 @@ export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
     }
 
     const profile = await getOrCreateProfile(uid);
+
+    // Re-check synchronously (no await between here and the write below): a
+    // second room:join for this code could have landed and filled the guest
+    // slot while we awaited the profile fetch above.
+    if (!rooms.has(code)) {
+      socket.emit('error', { code: 'room_not_found' });
+      return;
+    }
+    if (room.guestUid && room.guestUid !== uid) {
+      socket.emit('error', { code: 'room_full' });
+      return;
+    }
+
     room.guestUid = uid;
     room.guestDisplayName = profile.displayName;
     room.guestRating = profile.rating;

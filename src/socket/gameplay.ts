@@ -16,7 +16,7 @@ const wordSelectSchema = z.object({
 
 const matchIdSchema = z.object({ matchId: z.string().min(1) });
 
-const rateLimiter = new SocketRateLimiter(10, 1000);
+export const rateLimiter = new SocketRateLimiter(10, 1000);
 
 function computeStraightLine(start: GridPos, end: GridPos): GridPos[] {
   const dRow = end.row - start.row;

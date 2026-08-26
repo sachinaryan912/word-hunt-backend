@@ -11,7 +11,7 @@ const WINDOW_EXPANSION_PER_5S = 50;
 /** How long a player waits for a real opponent before getting a bot
  * instead. Keeps Quick Match from leaving a new/off-peak player searching
  * forever when nobody else happens to be queued at the same time. */
-const BOT_FALLBACK_MS = 12_000;
+const BOT_FALLBACK_MS = 30_000;
 
 function ratingWindowFor(entry: { joinedAt: number }): number {
   const waitedSec = (Date.now() - entry.joinedAt) / 1000;
@@ -34,6 +34,7 @@ export function startMatchmakingLoop(io: Server) {
       const windowA = ratingWindowFor(a);
       for (let j = i + 1; j < queue.length; j++) {
         const b = queue[j];
+        if (a.uid === b.uid) continue; // defense in depth; join is now de-duped below
         if (isBlockedPair(a, b)) continue;
         const windowB = ratingWindowFor(b);
         const diff = Math.abs(a.rating - b.rating);
@@ -59,25 +60,39 @@ export function startMatchmakingLoop(io: Server) {
   }, 1000);
 }
 
+// Reserves a uid against the async gap in 'matchmaking:join' below (the
+// checks run again before the `await`, but a second rapid-fire join for the
+// same uid — e.g. a client retry — could otherwise land in that gap, pass
+// the same checks, and get queued twice, letting the pairing loop match a
+// player against themself.
+const pendingJoin = new Set<string>();
+
 export function registerMatchmakingHandlers(io: Server, socket: Socket, uid: string) {
   socket.on('matchmaking:join', async () => {
     if (uidToMatch.has(uid)) {
       socket.emit('error', { code: 'already_in_match' });
       return;
     }
-    if (queue.some((e) => e.uid === uid)) {
-      return; // Duplicate prevention: already queued
+    if (queue.some((e) => e.uid === uid) || pendingJoin.has(uid)) {
+      return; // Duplicate prevention: already queued or already joining
     }
-    const [profile, blockedUids] = await Promise.all([getOrCreateProfile(uid), getBlockedUids(uid)]);
-    queue.push({
-      uid,
-      displayName: profile.displayName,
-      rating: profile.rating,
-      socketId: socket.id,
-      joinedAt: Date.now(),
-      blockedUids,
-    });
-    socket.emit('matchmaking:queued', { rating: profile.rating });
+    pendingJoin.add(uid);
+    try {
+      const [profile, blockedUids] = await Promise.all([getOrCreateProfile(uid), getBlockedUids(uid)]);
+      // Re-check: cancel, disconnect, or a match could have landed while awaited above.
+      if (uidToMatch.has(uid) || queue.some((e) => e.uid === uid)) return;
+      queue.push({
+        uid,
+        displayName: profile.displayName,
+        rating: profile.rating,
+        socketId: socket.id,
+        joinedAt: Date.now(),
+        blockedUids,
+      });
+      socket.emit('matchmaking:queued', { rating: profile.rating });
+    } finally {
+      pendingJoin.delete(uid);
+    }
   });
 
   socket.on('matchmaking:cancel', () => {

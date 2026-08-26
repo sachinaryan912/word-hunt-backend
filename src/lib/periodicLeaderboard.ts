@@ -215,9 +215,13 @@ async function friendsScoped(
       .map((p) => ({ uid: p.uid, name: p.displayName, value: p.rating, wordsFound: p.wordsFoundTotal, avatar: p.avatar }));
   } else {
     const col = db.collection('leaderboardPeriods').doc(periodDocKey(period)).collection('entries');
-    const periodDocs = await Promise.all(uids.map((uid) => col.doc(uid).get()));
-    raw = uids.map((uid, i) => {
-      const d = periodDocs[i].data();
+    const periodSnaps = await Promise.all(
+      chunk(uids, 30).map((batch) => col.where(FieldPath.documentId(), 'in', batch).get()),
+    );
+    const periodDataByUid = new Map<string, FirebaseFirestore.DocumentData>();
+    periodSnaps.forEach((snap) => snap.docs.forEach((d) => periodDataByUid.set(d.id, d.data())));
+    raw = uids.map((uid) => {
+      const d = periodDataByUid.get(uid);
       const p = playersByUid.get(uid);
       return {
         uid,
