@@ -197,7 +197,7 @@ export async function endMatch(io: Server, matchId: string, reason: EndReason, f
 
   // Fire-and-forget: periodic leaderboard totals and achievement grants never block the response to players.
   for (const p of realPlayers) {
-    void incrementPeriodScore(p.uid, p.displayName, p.score);
+    void incrementPeriodScore(p.uid, p.displayName, p.score, updatedProfiles[p.uid].rating);
     void (async () => {
       const profile = updatedProfiles[p.uid];
       const isWinner = winnerId === p.uid;

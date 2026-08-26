@@ -75,7 +75,7 @@ soloRouter.post('/complete', async (req: AuthedRequest, res) => {
     return { ...profile, ...updated } as PlayerProfileDoc;
   });
 
-  void incrementPeriodScore(uid, result.displayName, score);
+  void incrementPeriodScore(uid, result.displayName, score, result.rating);
   void checkAndGrantAchievements(uid, result, { lastSoloTimeSeconds: timeSeconds, lastSoloAccuracy: accuracy });
 
   res.json({

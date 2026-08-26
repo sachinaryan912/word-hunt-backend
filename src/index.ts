@@ -25,6 +25,12 @@ import { startDailyReminderLoop } from './lib/dailyReminder';
 import { checkAndNotifyUpdate } from './lib/updateNotifier';
 
 const app = express();
+// Cloud Run terminates TLS and proxies every request through its own
+// front end, adding X-Forwarded-For for the real client IP. Without this,
+// express-rate-limit can't trust that header (a spoofed one could otherwise
+// bypass per-IP limits) and logs a validation error on every request instead
+// of actually rate-limiting by client IP. `1` = trust exactly one hop.
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({ origin: env.corsOrigin }));
 app.use(express.json({ limit: '64kb' }));
@@ -46,6 +52,17 @@ app.use('/v1/blocks', authMiddleware, mutationRateLimit, blocksRouter);
 app.use('/v1/ads', authMiddleware, mutationRateLimit, adsRouter);
 app.use('/v1/daily-gift', authMiddleware, mutationRateLimit, dailyGiftRouter);
 app.use('/v1/avatars', authMiddleware, mutationRateLimit, avatarsRouter);
+
+// Catches any route handler's thrown/rejected error (Express 5 forwards async
+// rejections here automatically) so it's actually logged in Cloud Run instead
+// of falling through to Express's default HTML error page — which the Dart
+// client can't parse as JSON, so it surfaces to the user identically to an
+// empty/successful response instead of a visible failure.
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('unhandled request error', err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: 'internal_error' });
+});
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: env.corsOrigin } });

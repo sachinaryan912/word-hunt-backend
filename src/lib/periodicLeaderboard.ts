@@ -29,15 +29,26 @@ function periodDocKey(period: Exclude<LeaderboardPeriod, 'global'>, date: Date =
   return `monthly_${monthKey(date)}`;
 }
 
-/** Adds `points` to a player's daily/weekly/monthly running totals. Fire-and-forget from callers. */
-export async function incrementPeriodScore(uid: string, displayName: string, points: number): Promise<void> {
-  if (points <= 0) return;
+/**
+ * Adds `points` to a player's daily/weekly/monthly running score totals, and stamps
+ * their *current* rating (real ELO/MMR from `players/{uid}.rating`) onto the same
+ * period docs. `rating` is always overwritten (not incremented) — the caller must
+ * pass the player's just-read/just-updated rating so the period leaderboard's
+ * ranking and displayed MMR stay identical to what the profile screen shows,
+ * instead of drifting from a separately-accumulated period value.
+ * Fire-and-forget from callers.
+ */
+export async function incrementPeriodScore(uid: string, displayName: string, points: number, rating: number): Promise<void> {
   const now = new Date();
   const keys: Exclude<LeaderboardPeriod, 'global'>[] = ['daily', 'weekly', 'monthly'];
   const batch = db.batch();
   for (const period of keys) {
     const ref = db.collection('leaderboardPeriods').doc(periodDocKey(period, now)).collection('entries').doc(uid);
-    batch.set(ref, { uid, displayName, score: FieldValue.increment(points), updatedAt: Date.now() }, { merge: true });
+    // rating is always stamped, even when points is 0 (e.g. a match lost 0-0 on score
+    // still moves ELO), so the period leaderboard's MMR never lags a real rating change.
+    const update: Record<string, unknown> = { uid, displayName, rating, updatedAt: Date.now() };
+    if (points > 0) update.score = FieldValue.increment(points);
+    batch.set(ref, update, { merge: true });
   }
   await batch.commit();
 }
@@ -74,6 +85,7 @@ export interface LeaderboardEntryDto {
   rating: number;
   wordsFound: number;
   isCurrentUser: boolean;
+  avatar: string;
 }
 
 export interface LeaderboardResultDto {
@@ -92,6 +104,7 @@ async function globalAll(callerUid: string, limit: number): Promise<LeaderboardR
       rating: p.rating,
       wordsFound: p.wordsFoundTotal,
       isCurrentUser: p.uid === callerUid,
+      avatar: p.avatar,
     };
   });
 
@@ -113,32 +126,53 @@ async function globalAll(callerUid: string, limit: number): Promise<LeaderboardR
       rating: me.rating,
       wordsFound: me.wordsFoundTotal,
       isCurrentUser: true,
+      avatar: me.avatar,
     },
   };
 }
 
 async function periodAll(period: Exclude<LeaderboardPeriod, 'global'>, callerUid: string, limit: number): Promise<LeaderboardResultDto> {
   const col = db.collection('leaderboardPeriods').doc(periodDocKey(period)).collection('entries');
-  const topSnap = await col.orderBy('score', 'desc').limit(limit).get();
+  const topSnap = await col.orderBy('rating', 'desc').limit(limit).get();
+
+  // Period entries don't carry avatar (only score/rating are denormalized there),
+  // so batch-fetch the live profile for everyone shown to render their avatar —
+  // this also doubles as the live-rating/name fallback for the caller below.
+  const idsToFetch = Array.from(new Set([...topSnap.docs.map((d) => d.id), callerUid]));
+  const playerSnaps = await Promise.all(
+    chunk(idsToFetch, 30).map((batch) => db.collection('players').where(FieldPath.documentId(), 'in', batch).get()),
+  );
+  const playersByUid = new Map<string, PlayerProfileDoc>();
+  playerSnaps.forEach((snap) => snap.docs.forEach((d) => playersByUid.set(d.id, d.data() as PlayerProfileDoc)));
+
   const entries: LeaderboardEntryDto[] = topSnap.docs.map((doc, index) => {
     const d = doc.data();
     return {
       rank: index + 1,
       playerId: doc.id,
       playerName: d.displayName as string,
-      rating: Math.round((d.score as number) ?? 0),
+      rating: (d.rating as number) ?? 0,
       wordsFound: 0,
       isCurrentUser: doc.id === callerUid,
+      avatar: playersByUid.get(doc.id)?.avatar ?? '',
     };
   });
 
   const myDoc = await col.doc(callerUid).get();
-  const myScore = (myDoc.data()?.score as number) ?? 0;
-  const myName = (myDoc.data()?.displayName as string) ?? 'You';
+  const myPlayer = playersByUid.get(callerUid);
+  let myRating = myDoc.data()?.rating as number | undefined;
+  let myName = myDoc.data()?.displayName as string | undefined;
+  if (myRating === undefined) {
+    // No activity yet this period — fall back to the live profile rating so
+    // "me" here always matches the profile screen instead of showing 0.
+    myRating = myPlayer?.rating ?? 0;
+    myName = myPlayer?.displayName ?? myName;
+  }
+  myName = myName ?? 'You';
   const alreadyInTop = entries.find((e) => e.playerId === callerUid);
   let myRank = alreadyInTop?.rank ?? null;
   if (myRank === null) {
-    const higherCount = await col.where('score', '>', myScore).count().get();
+    const higherCount = await col.where('rating', '>', myRating).count().get();
     myRank = higherCount.data().count + 1;
   }
 
@@ -148,9 +182,10 @@ async function periodAll(period: Exclude<LeaderboardPeriod, 'global'>, callerUid
       rank: myRank,
       playerId: callerUid,
       playerName: myName,
-      rating: Math.round(myScore),
+      rating: myRating,
       wordsFound: 0,
       isCurrentUser: true,
+      avatar: myPlayer?.avatar ?? '',
     },
   };
 }
@@ -163,35 +198,38 @@ async function friendsScoped(
   const friendUids = await getFriendUids(callerUid);
   const uids = Array.from(new Set([callerUid, ...friendUids]));
 
-  let raw: { uid: string; name: string; value: number; wordsFound: number }[] = [];
+  // Live profiles give us avatar (never denormalized into period docs) plus a
+  // rating/name fallback for anyone without period activity yet.
+  const playerSnaps = await Promise.all(
+    chunk(uids, 30).map((batch) => db.collection('players').where(FieldPath.documentId(), 'in', batch).get()),
+  );
+  const playersByUid = new Map<string, PlayerProfileDoc>();
+  playerSnaps.forEach((snap) => snap.docs.forEach((d) => playersByUid.set(d.id, d.data() as PlayerProfileDoc)));
+
+  let raw: { uid: string; name: string; value: number; wordsFound: number; avatar: string }[] = [];
 
   if (period === 'global') {
-    const docs = await Promise.all(
-      chunk(uids, 30).map((batch) =>
-        db.collection('players').where(FieldPath.documentId(), 'in', batch).get(),
-      ),
-    );
-    raw = docs.flatMap((snap) =>
-      snap.docs.map((d) => {
-        const p = d.data() as PlayerProfileDoc;
-        return { uid: p.uid, name: p.displayName, value: p.rating, wordsFound: p.wordsFoundTotal };
-      }),
-    );
+    raw = uids
+      .map((uid) => playersByUid.get(uid))
+      .filter((p): p is PlayerProfileDoc => p !== undefined)
+      .map((p) => ({ uid: p.uid, name: p.displayName, value: p.rating, wordsFound: p.wordsFoundTotal, avatar: p.avatar }));
   } else {
     const col = db.collection('leaderboardPeriods').doc(periodDocKey(period)).collection('entries');
-    const docs = await Promise.all(uids.map((uid) => col.doc(uid).get()));
-    raw = docs
-      .filter((d) => d.exists)
-      .map((d) => ({
-        uid: d.id,
-        name: (d.data()?.displayName as string) ?? 'Player',
-        value: (d.data()?.score as number) ?? 0,
+    const periodDocs = await Promise.all(uids.map((uid) => col.doc(uid).get()));
+    raw = uids.map((uid, i) => {
+      const d = periodDocs[i].data();
+      const p = playersByUid.get(uid);
+      return {
+        uid,
+        name: (d?.displayName as string) ?? p?.displayName ?? 'Player',
+        // Friends with no period activity yet still have a real rating on their
+        // profile — fall back to it so they don't show up as 0 MMR next to their
+        // actual profile value.
+        value: (d?.rating as number) ?? p?.rating ?? 0,
         wordsFound: 0,
-      }));
-    // Include friends with no activity yet at score 0 so the list isn't empty.
-    for (const uid of uids) {
-      if (!raw.some((r) => r.uid === uid)) raw.push({ uid, name: 'Player', value: 0, wordsFound: 0 });
-    }
+        avatar: p?.avatar ?? '',
+      };
+    });
   }
 
   raw.sort((a, b) => b.value - a.value);
@@ -202,10 +240,11 @@ async function friendsScoped(
     rating: Math.round(r.value),
     wordsFound: r.wordsFound,
     isCurrentUser: r.uid === callerUid,
+    avatar: r.avatar,
   }));
 
   const myIndex = raw.findIndex((r) => r.uid === callerUid);
-  const mine = raw[myIndex] ?? { uid: callerUid, name: 'You', value: 0, wordsFound: 0 };
+  const mine = raw[myIndex] ?? { uid: callerUid, name: 'You', value: 0, wordsFound: 0, avatar: '' };
 
   return {
     entries,
@@ -216,6 +255,7 @@ async function friendsScoped(
       rating: Math.round(mine.value),
       wordsFound: mine.wordsFound,
       isCurrentUser: true,
+      avatar: mine.avatar,
     },
   };
 }

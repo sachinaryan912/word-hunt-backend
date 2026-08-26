@@ -59,7 +59,7 @@ jobs:
             --min-instances=1 \
             --max-instances=1 \
             --cpu=1 \
-            --memory=512Mi \
+            --memory=256Mi \
             --concurrency=250 \
             --timeout=3600 \
             --set-env-vars="CORS_ORIGIN=*,FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}"
