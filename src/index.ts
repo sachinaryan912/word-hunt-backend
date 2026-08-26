@@ -25,6 +25,12 @@ import { startDailyReminderLoop } from './lib/dailyReminder';
 import { checkAndNotifyUpdate } from './lib/updateNotifier';
 
 const app = express();
+// Cloud Run terminates TLS and proxies every request through its own
+// front end, adding X-Forwarded-For for the real client IP. Without this,
+// express-rate-limit can't trust that header (a spoofed one could otherwise
+// bypass per-IP limits) and logs a validation error on every request instead
+// of actually rate-limiting by client IP. `1` = trust exactly one hop.
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({ origin: env.corsOrigin }));
 app.use(express.json({ limit: '64kb' }));
