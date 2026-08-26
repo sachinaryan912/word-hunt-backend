@@ -1,7 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { getOrCreateProfile } from '../lib/profileStore';
 import { sendPushToUser } from '../lib/notifications';
-import { EXTRA_ROOM_COST_XP, reserveRoomCreation } from '../lib/roomLimits';
+import { EXTRA_ROOM_COST_XP, reserveRoomCreation, refundRoomCreation } from '../lib/roomLimits';
 import { createMatch } from './matchLifecycle';
 import { rooms, roomDisconnectTimers, uidToRoom } from './state';
 import { RoomState } from '../types';
@@ -46,6 +46,14 @@ export function closeRoom(io: Server, code: string, reason: string) {
     uidToRoom.delete(room.guestUid);
   }
   rooms.delete(code);
+  // Nobody ever actually joined this room (host backed out, disconnected, or
+  // let it sit until expiry) — refund the daily free-room slot/XP it cost to
+  // create instead of charging the host for a room that went completely
+  // unused. A room that got as far as a guest joining keeps the charge even
+  // if it's closed before a match starts — that's a real usage attempt.
+  if (!room.guestEverJoined) {
+    void refundRoomCreation(room.hostUid, room.xpCharged).catch((err) => console.error('room refund failed', err));
+  }
 }
 
 function scheduleExpiry(io: Server, room: RoomState) {
@@ -97,6 +105,8 @@ export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
         guestReady: false,
         createdAt: Date.now(),
         expireTimer: null,
+        guestEverJoined: false,
+        xpCharged: reservation.xpCharged,
       };
       rooms.set(code, room);
       uidToRoom.set(uid, code);
@@ -144,6 +154,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
     room.guestDisplayName = profile.displayName;
     room.guestRating = profile.rating;
     room.guestSocketId = socket.id;
+    room.guestEverJoined = true;
     uidToRoom.set(uid, code);
     socket.join(`room-${code}`);
     scheduleExpiry(io, room);

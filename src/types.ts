@@ -117,4 +117,9 @@ export interface RoomState {
   guestReady: boolean;
   createdAt: number;
   expireTimer: ReturnType<typeof setTimeout> | null;
+  // Tracks whether this room was ever actually used, so it can be refunded
+  // against the host's daily free-room count/XP if it closes unused (e.g.
+  // the host backs out right after generating a code, before anyone joins).
+  guestEverJoined: boolean;
+  xpCharged: number;
 }
