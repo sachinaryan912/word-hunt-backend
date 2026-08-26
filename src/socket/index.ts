@@ -5,6 +5,7 @@ import { registerMatchmakingHandlers, startMatchmakingLoop } from './matchmaking
 import { registerGameplayHandlers } from './gameplay';
 import { registerDisconnectHandlers } from './disconnect';
 import { registerRoomHandlers } from './rooms';
+import { registerFriendMatchHandlers } from './friendMatch';
 import { registerChatHandlers } from './chat';
 import { socketToUid, uidToSocket } from './state';
 
@@ -31,6 +32,7 @@ export function setupSocket(io: Server) {
     registerGameplayHandlers(io, socket, uid);
     registerDisconnectHandlers(io, socket, uid);
     registerRoomHandlers(io, socket, uid);
+    registerFriendMatchHandlers(io, socket, uid);
     registerChatHandlers(io, socket, uid, profile.displayName);
   });
 
