@@ -4,6 +4,7 @@ import { activeMatches, removeFromQueue, roomDisconnectTimers, rooms, socketToUi
 import { broadcastToMatch } from './gameplay';
 import { endMatch } from './matchLifecycle';
 import { closeRoom, roomPayload } from './rooms';
+import { cancelFriendInvitesFor } from './friendMatch';
 
 const GRACE_PERIOD_MS = 20_000;
 /** Same grace period as an active match — a brief network blip shouldn't
@@ -59,6 +60,7 @@ export function registerDisconnectHandlers(io: Server, socket: Socket, uid: stri
     }
     uidToSocket.delete(uid);
     removeFromQueue(uid);
+    cancelFriendInvitesFor(io, uid);
 
     const roomCode = uidToRoom.get(uid);
     if (roomCode) {

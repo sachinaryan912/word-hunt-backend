@@ -1,4 +1,4 @@
-import { ActiveMatch, QueueEntry, RoomState } from '../types';
+import { ActiveMatch, FriendMatchInvite, QueueEntry, RoomState } from '../types';
 
 /** In-memory matchmaking queue. One entry per waiting uid (Duplicate prevention enforced by callers). */
 export const queue: QueueEntry[] = [];
@@ -31,3 +31,12 @@ export const uidToRoom = new Map<string, string>();
  * reconnect in time — mirrors the active-match disconnect grace period so a
  * brief network blip doesn't instantly tear down the lobby. */
 export const roomDisconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** inviteId -> live "play with a friend" invite (one real-time match request, not a persistent lobby). */
+export const friendInvites = new Map<string, FriendMatchInvite>();
+
+/** uid -> inviteId, for the player who sent the invite (one outgoing invite at a time). */
+export const outgoingInviteByUid = new Map<string, string>();
+
+/** uid -> inviteId, for the player who received the invite (one incoming invite at a time). */
+export const incomingInviteByUid = new Map<string, string>();

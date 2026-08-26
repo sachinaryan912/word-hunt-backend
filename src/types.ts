@@ -93,6 +93,16 @@ export interface QueueEntry {
   isBot?: boolean;
 }
 
+export interface FriendMatchInvite {
+  inviteId: string;
+  fromUid: string;
+  fromDisplayName: string;
+  fromRating: number;
+  toUid: string;
+  createdAt: number;
+  timeoutTimer: ReturnType<typeof setTimeout>;
+}
+
 export interface RoomState {
   code: string;
   hostUid: string;
