@@ -1,6 +1,16 @@
 import { Server, Socket } from 'socket.io';
 import { z } from 'zod';
-import { activeMatches, removeFromQueue, roomDisconnectTimers, rooms, socketToUid, uidToMatch, uidToRoom, uidToSocket } from './state';
+import {
+  activeMatches,
+  recentlyEndedMatches,
+  removeFromQueue,
+  roomDisconnectTimers,
+  rooms,
+  socketToUid,
+  uidToMatch,
+  uidToRoom,
+  uidToSocket,
+} from './state';
 import { broadcastToMatch, rateLimiter as wordSelectRateLimiter } from './gameplay';
 import { endMatch } from './matchLifecycle';
 import { closeRoom, roomPayload } from './rooms';
@@ -19,6 +29,11 @@ export function registerDisconnectHandlers(io: Server, socket: Socket, uid: stri
     if (!parsed.success) return;
     const match = activeMatches.get(parsed.data.matchId);
     if (!match || match.status !== 'active') {
+      const ended = recentlyEndedMatches.get(parsed.data.matchId);
+      if (ended && ended.participantUids.includes(uid)) {
+        socket.emit('match:end', ended.payload);
+        return;
+      }
       socket.emit('error', { code: 'match_not_found' });
       return;
     }

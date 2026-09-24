@@ -8,10 +8,14 @@ import { levelForXp, XP_MATCH_PARTICIPATION, XP_MATCH_WIN_BONUS } from '../lib/x
 import { checkAndGrantAchievements } from '../lib/achievements';
 import { incrementPeriodScore } from '../lib/periodicLeaderboard';
 import { ActiveMatch, PlayerProfileDoc, QueueEntry } from '../types';
-import { activeMatches, uidToMatch, uidToSocket } from './state';
+import { activeMatches, recentlyEndedMatches, uidToMatch, uidToSocket } from './state';
 import { cancelBotPlay, scheduleBotPlay } from './botPlayer';
 
 const MATCH_DURATION_SECONDS = 180;
+
+/** How long a finished match's result stays available for a disconnected
+ * player to retrieve via `match:rejoin` after missing the live `match:end`. */
+const RECENTLY_ENDED_TTL_MS = 2 * 60 * 1000;
 
 /** Private room matches have no gameplay time limit. This is only a
  * background safety net so an abandoned-but-still-connected room match
@@ -104,7 +108,13 @@ export async function endMatch(io: Server, matchId: string, reason: EndReason, f
   if (match.endTimer) clearTimeout(match.endTimer);
   for (const timer of match.disconnectTimers.values()) clearTimeout(timer);
 
+  // Free both players immediately, before any Firestore work below that could
+  // throw — otherwise a failed transaction would leave them permanently
+  // "in a match" (uidToMatch never cleared) with no way to queue or join again.
   const [p1, p2] = match.players;
+  activeMatches.delete(matchId);
+  uidToMatch.delete(p1.uid);
+  uidToMatch.delete(p2.uid);
   let winnerId: string | null;
 
   if (reason === 'forfeit' && forfeitingUid) {
@@ -132,41 +142,47 @@ export async function endMatch(io: Server, matchId: string, reason: EndReason, f
   const realPlayers = match.players.filter((p) => !p.isBot);
 
   const updatedProfiles: Record<string, PlayerProfileDoc> = {};
-  const newRatings = await db.runTransaction(async (tx) => {
-    const refs = realPlayers.map((p) => profileRef(p.uid));
-    const snaps = await Promise.all(refs.map((r) => tx.get(r)));
-    const result: Record<string, number> = {};
+  let newRatings: Record<string, number> = {};
+  try {
+    newRatings = await db.runTransaction(async (tx) => {
+      const refs = realPlayers.map((p) => profileRef(p.uid));
+      const snaps = await Promise.all(refs.map((r) => tx.get(r)));
+      const result: Record<string, number> = {};
 
-    snaps.forEach((snap, i) => {
-      const p = realPlayers[i];
-      const profile = snap.data() as PlayerProfileDoc;
-      const won = winnerId === p.uid;
-      const lost = winnerId !== null && winnerId !== p.uid;
-      const xpGain = XP_MATCH_PARTICIPATION + (won ? XP_MATCH_WIN_BONUS : 0);
-      const newXp = profile.xp + xpGain;
-      const newRating = Math.max(0, profile.rating + deltas[p.uid]);
-      const newWinStreak = won ? profile.winStreak + 1 : lost ? 0 : profile.winStreak;
+      snaps.forEach((snap, i) => {
+        const p = realPlayers[i];
+        const profile = snap.data() as PlayerProfileDoc | undefined;
+        if (!profile) return;
+        const won = winnerId === p.uid;
+        const lost = winnerId !== null && winnerId !== p.uid;
+        const xpGain = XP_MATCH_PARTICIPATION + (won ? XP_MATCH_WIN_BONUS : 0);
+        const newXp = profile.xp + xpGain;
+        const newRating = Math.max(0, profile.rating + deltas[p.uid]);
+        const newWinStreak = won ? profile.winStreak + 1 : lost ? 0 : profile.winStreak;
 
-      const updates: Partial<PlayerProfileDoc> = {
-        rating: newRating,
-        xp: newXp,
-        level: levelForXp(newXp),
-        gamesPlayed: profile.gamesPlayed + 1,
-        wins: profile.wins + (won ? 1 : 0),
-        losses: profile.losses + (lost ? 1 : 0),
-        bestScore: Math.max(profile.bestScore, p.score),
-        winStreak: newWinStreak,
-        bestStreak: Math.max(profile.bestStreak, newWinStreak),
-        wordsFoundTotal: profile.wordsFoundTotal + p.wordsFound,
-        updatedAt: Date.now(),
-      };
-      tx.update(refs[i], updates);
-      result[p.uid] = newRating;
-      updatedProfiles[p.uid] = { ...profile, ...updates };
+        const updates: Partial<PlayerProfileDoc> = {
+          rating: newRating,
+          xp: newXp,
+          level: levelForXp(newXp),
+          gamesPlayed: profile.gamesPlayed + 1,
+          wins: profile.wins + (won ? 1 : 0),
+          losses: profile.losses + (lost ? 1 : 0),
+          bestScore: Math.max(profile.bestScore, p.score),
+          winStreak: newWinStreak,
+          bestStreak: Math.max(profile.bestStreak, newWinStreak),
+          wordsFoundTotal: profile.wordsFoundTotal + p.wordsFound,
+          updatedAt: Date.now(),
+        };
+        tx.update(refs[i], updates);
+        result[p.uid] = newRating;
+        updatedProfiles[p.uid] = { ...profile, ...updates };
+      });
+
+      return result;
     });
-
-    return result;
-  });
+  } catch (err) {
+    console.error('failed to apply match results to player profiles', matchId, err);
+  }
 
   await db
     .collection('matches')
@@ -181,25 +197,38 @@ export async function endMatch(io: Server, matchId: string, reason: EndReason, f
     })
     .catch((err) => console.error('failed to finalize match doc', err));
 
+  const endPayload = {
+    matchId,
+    winnerId,
+    reason,
+    scores: { [p1.uid]: p1.score, [p2.uid]: p2.score },
+    ratingDeltas: deltas,
+    newRatings,
+  };
+
   for (const p of match.players) {
     const socketId = uidToSocket.get(p.uid);
-    if (socketId) {
-      io.to(socketId).emit('match:end', {
-        matchId,
-        winnerId,
-        reason,
-        scores: { [p1.uid]: p1.score, [p2.uid]: p2.score },
-        ratingDeltas: deltas,
-        newRatings,
-      });
-    }
+    if (socketId) io.to(socketId).emit('match:end', endPayload);
   }
+
+  // Keep the result around briefly for any real (non-bot) player who was
+  // disconnected when the match ended and so missed the emit above — they
+  // can pick it up via `match:rejoin` instead of getting `match_not_found`.
+  const endedTimer = setTimeout(() => recentlyEndedMatches.delete(matchId), RECENTLY_ENDED_TTL_MS);
+  recentlyEndedMatches.set(matchId, {
+    participantUids: realPlayers.map((p) => p.uid),
+    payload: endPayload,
+    timer: endedTimer,
+  });
 
   // Fire-and-forget: periodic leaderboard totals and achievement grants never block the response to players.
   for (const p of realPlayers) {
-    void incrementPeriodScore(p.uid, p.displayName, p.score, updatedProfiles[p.uid].rating);
-    void (async () => {
-      const profile = updatedProfiles[p.uid];
+    const profile = updatedProfiles[p.uid];
+    if (!profile) continue; // profile update failed above — skip dependent best-effort work for this player
+    incrementPeriodScore(p.uid, p.displayName, p.score, profile.rating).catch((err) =>
+      console.error('failed to increment period score', p.uid, err),
+    );
+    (async () => {
       const isWinner = winnerId === p.uid;
       let globalRank: number | null = null;
       if (isWinner) {
@@ -210,10 +239,6 @@ export async function endMatch(io: Server, matchId: string, reason: EndReason, f
         hadComebackWin: isWinner && p.wasBehind,
         globalRank,
       });
-    })();
+    })().catch((err) => console.error('failed to grant achievements', p.uid, err));
   }
-
-  activeMatches.delete(matchId);
-  uidToMatch.delete(p1.uid);
-  uidToMatch.delete(p2.uid);
 }

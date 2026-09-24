@@ -1,5 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { getOrCreateProfile } from '../lib/profileStore';
+import { areFriends } from '../lib/friends';
+import { getBlockedUids } from '../lib/blocks';
 import { sendPushToUser } from '../lib/notifications';
 import { createMatch } from './matchLifecycle';
 import { rooms, roomDisconnectTimers, uidToRoom } from './state';
@@ -58,6 +60,12 @@ function scheduleExpiry(io: Server, room: RoomState) {
 // uidToRoom.set silently orphans the first room until its 10-minute expiry.
 const pendingRoomCreate = new Set<string>();
 
+// Same purpose as pendingRoomCreate, for 'room:join' below — closes the race
+// where two rapid joins from the same uid (same or different codes) both
+// pass the pre-await checks during the getOrCreateProfile await, which would
+// otherwise desync uidToRoom from the rooms' actual guestUid.
+const pendingRoomJoin = new Set<string>();
+
 export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
   socket.on('room:create', async () => {
     if (uidToRoom.has(uid) || pendingRoomCreate.has(uid)) {
@@ -100,6 +108,10 @@ export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
   socket.on('room:join', async (data: { code?: string }) => {
     const code = data?.code;
     if (!code) return;
+    if (pendingRoomJoin.has(uid)) {
+      socket.emit('error', { code: 'already_in_room' });
+      return;
+    }
     const room = rooms.get(code);
     if (!room) {
       socket.emit('error', { code: 'room_not_found' });
@@ -114,28 +126,36 @@ export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
       return;
     }
 
-    const profile = await getOrCreateProfile(uid);
+    pendingRoomJoin.add(uid);
+    try {
+      const profile = await getOrCreateProfile(uid);
 
-    // Re-check synchronously (no await between here and the write below): a
-    // second room:join for this code could have landed and filled the guest
-    // slot while we awaited the profile fetch above.
-    if (!rooms.has(code)) {
-      socket.emit('error', { code: 'room_not_found' });
-      return;
-    }
-    if (room.guestUid && room.guestUid !== uid) {
-      socket.emit('error', { code: 'room_full' });
-      return;
-    }
+      // Re-check after the await: another room:join/create for this uid, or a
+      // second joiner for this code, could have landed while we awaited above.
+      if (!rooms.has(code)) {
+        socket.emit('error', { code: 'room_not_found' });
+        return;
+      }
+      if (room.guestUid && room.guestUid !== uid) {
+        socket.emit('error', { code: 'room_full' });
+        return;
+      }
+      if (uidToRoom.has(uid) && uidToRoom.get(uid) !== code) {
+        socket.emit('error', { code: 'already_in_room' });
+        return;
+      }
 
-    room.guestUid = uid;
-    room.guestDisplayName = profile.displayName;
-    room.guestRating = profile.rating;
-    room.guestSocketId = socket.id;
-    uidToRoom.set(uid, code);
-    socket.join(`room-${code}`);
-    scheduleExpiry(io, room);
-    broadcastRoomUpdate(io, room);
+      room.guestUid = uid;
+      room.guestDisplayName = profile.displayName;
+      room.guestRating = profile.rating;
+      room.guestSocketId = socket.id;
+      uidToRoom.set(uid, code);
+      socket.join(`room-${code}`);
+      scheduleExpiry(io, room);
+      broadcastRoomUpdate(io, room);
+    } finally {
+      pendingRoomJoin.delete(uid);
+    }
   });
 
   socket.on('room:ready', (data: { code?: string; ready?: boolean }) => {
@@ -199,11 +219,19 @@ export function registerRoomHandlers(io: Server, socket: Socket, uid: string) {
     );
   });
 
-  socket.on('room:invite', (data: { code?: string; friendUid?: string }) => {
+  socket.on('room:invite', async (data: { code?: string; friendUid?: string }) => {
     const { code, friendUid } = data ?? {};
-    if (!code || !friendUid) return;
+    if (!code || !friendUid || friendUid === uid) return;
     const room = rooms.get(code);
     if (!room || room.hostUid !== uid) return;
+
+    if (!(await areFriends(uid, friendUid))) return;
+    const [blockedByMe, blockedByThem] = await Promise.all([getBlockedUids(uid), getBlockedUids(friendUid)]);
+    if (blockedByMe.has(friendUid) || blockedByThem.has(uid)) return;
+
+    // Re-check the room still exists and is still ours after the awaits above.
+    if (rooms.get(code)?.hostUid !== uid) return;
+
     void sendPushToUser(friendUid, 'Room invite', `${room.hostDisplayName} invited you to a private match — code ${code}`, {
       type: 'room_invite',
       code,

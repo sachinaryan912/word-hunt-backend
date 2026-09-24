@@ -75,8 +75,12 @@ soloRouter.post('/complete', async (req: AuthedRequest, res) => {
     return { ...profile, ...updated } as PlayerProfileDoc;
   });
 
-  void incrementPeriodScore(uid, result.displayName, score, result.rating);
-  void checkAndGrantAchievements(uid, result, { lastSoloTimeSeconds: timeSeconds, lastSoloAccuracy: accuracy });
+  incrementPeriodScore(uid, result.displayName, score, result.rating).catch((err) =>
+    console.error('failed to increment period score', uid, err),
+  );
+  checkAndGrantAchievements(uid, result, { lastSoloTimeSeconds: timeSeconds, lastSoloAccuracy: accuracy }).catch((err) =>
+    console.error('failed to grant achievements', uid, err),
+  );
 
   res.json({
     score,

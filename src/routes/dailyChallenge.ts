@@ -125,8 +125,12 @@ dailyChallengeRouter.post('/complete', async (req: AuthedRequest, res) => {
     return { ...p, ...updates } as PlayerProfileDoc;
   });
 
-  void incrementPeriodScore(uid, profile.displayName, score, updatedProfile.rating);
-  void checkAndGrantAchievements(uid, updatedProfile, { lastSoloTimeSeconds: timeSeconds, lastSoloAccuracy: accuracy });
+  incrementPeriodScore(uid, profile.displayName, score, updatedProfile.rating).catch((err) =>
+    console.error('failed to increment period score', uid, err),
+  );
+  checkAndGrantAchievements(uid, updatedProfile, { lastSoloTimeSeconds: timeSeconds, lastSoloAccuracy: accuracy }).catch(
+    (err) => console.error('failed to grant achievements', uid, err),
+  );
 
   res.json({ score, bestScore, accuracy, rankToday, xpBonus, profile: updatedProfile });
 });
