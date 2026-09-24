@@ -1,8 +1,8 @@
 import { randomUUID } from 'crypto';
 import { Server, Socket } from 'socket.io';
-import { db } from '../lib/firebase';
 import { getOrCreateProfile } from '../lib/profileStore';
 import { getBlockedUids } from '../lib/blocks';
+import { areFriends } from '../lib/friends';
 import { sendPushToUser } from '../lib/notifications';
 import { createMatch } from './matchLifecycle';
 import { friendInvites, incomingInviteByUid, outgoingInviteByUid, queue, uidToMatch, uidToRoom, uidToSocket } from './state';
@@ -15,11 +15,6 @@ const INVITE_TIMEOUT_MS = 60_000;
 
 function isBusy(uid: string): boolean {
   return uidToMatch.has(uid) || uidToRoom.has(uid) || queue.some((e) => e.uid === uid);
-}
-
-async function areFriends(a: string, b: string): Promise<boolean> {
-  const doc = await db.collection('players').doc(a).collection('friends').doc(b).get();
-  return doc.exists;
 }
 
 function clearInvite(inviteId: string) {
@@ -158,6 +153,16 @@ export function registerFriendMatchHandlers(io: Server, socket: Socket, uid: str
     }
 
     const accepterProfile = await getOrCreateProfile(uid);
+
+    // Re-check after the await: the matchmaking loop or another accept could
+    // have paired either player into a different match during this gap.
+    if (isBusy(uid) || isBusy(invite.fromUid)) {
+      const fromSocket = uidToSocket.get(invite.fromUid);
+      if (fromSocket) io.to(fromSocket).emit('friend_match:accept_failed', { inviteId, code: 'friend_unavailable' });
+      socket.emit('friend_match:accept_failed', { inviteId, code: 'already_busy' });
+      return;
+    }
+
     createMatch(
       io,
       { uid: invite.fromUid, displayName: invite.fromDisplayName, rating: invite.fromRating, socketId: fromSocketId, joinedAt: Date.now() },

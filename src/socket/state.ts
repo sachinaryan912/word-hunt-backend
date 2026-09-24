@@ -32,6 +32,15 @@ export const uidToRoom = new Map<string, string>();
  * brief network blip doesn't instantly tear down the lobby. */
 export const roomDisconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+/** matchId -> a just-finished match's result payload, kept briefly so a player
+ * who was disconnected when the match ended (and so missed the live
+ * `match:end` broadcast) can still retrieve it via `match:rejoin` instead of
+ * getting `match_not_found`. */
+export const recentlyEndedMatches = new Map<
+  string,
+  { participantUids: string[]; payload: Record<string, unknown>; timer: ReturnType<typeof setTimeout> }
+>();
+
 /** inviteId -> live "play with a friend" invite (one real-time match request, not a persistent lobby). */
 export const friendInvites = new Map<string, FriendMatchInvite>();
 

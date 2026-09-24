@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db } from '../lib/firebase';
 import { AuthedRequest } from '../middleware/authMiddleware';
 import { getOrCreateProfile } from '../lib/profileStore';
+import { getBlockedUids } from '../lib/blocks';
 import { sendPushToUser } from '../lib/notifications';
 
 export const friendsRouter = Router();
@@ -51,6 +52,12 @@ friendsRouter.post('/requests', async (req: AuthedRequest, res) => {
   const { toUid } = parsed.data;
   if (toUid === fromUid) {
     res.status(400).json({ error: 'cannot_friend_self' });
+    return;
+  }
+
+  const [blockedByMe, blockedByThem] = await Promise.all([getBlockedUids(fromUid), getBlockedUids(toUid)]);
+  if (blockedByMe.has(toUid) || blockedByThem.has(fromUid)) {
+    res.status(403).json({ error: 'blocked' });
     return;
   }
 
